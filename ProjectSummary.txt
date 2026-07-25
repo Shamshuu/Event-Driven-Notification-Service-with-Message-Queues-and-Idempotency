@@ -1,0 +1,67 @@
+1. What the Project Does & Its Purpose
+
+In high-traffic distributed microservices (like e-commerce, banking, or SaaS apps), services must communicate reliably without slowing down the user. If a system sends an order confirmation email, the Checkout service shouldn't block and wait for a slow third-party email API (like SendGrid or Twilio) to respond.
+
+This project implements an Event-Driven Notification Service that solves this issue by separating the message publisher from the message handler (consumer).
+
+Its main purposes are:
+
+Decoupling (Asynchronous Processing): 
+The publisher accepts the request, puts it in a queue, and returns an immediate response (202 Accepted) to the user.
+
+Exactly-Once Processing (Idempotency): 
+Ensures that even if the network fails and resends the same message, the recipient receives the notification exactly once (no duplicate SMS/Emails).
+
+Resilience (Fault Tolerance): 
+If the database goes down or a third-party gateway experiences a outage, messages are not lost. They are safely retried with increasing wait times (exponential backoff) and ultimately isolated in a Dead-Letter Queue (DLQ) if they cannot be processed.
+
+
+2. How Each Technology Helps
+
+Node.js & Express:
+Node.js has a non-blocking, event-driven, single-threaded runtime that is ideal for I/O-intensive workloads like reading/writing from queues and databases. Express is used to build a lightweight API server to receive events and run system health checks.
+
+RabbitMQ:
+It acts as the buffer (message broker) between services. It guarantees that messages are persisted (saved to disk) and won't be lost if a service restarts. RabbitMQ's built-in support for TTL (Time-To-Live) and Dead-Letter Exchanges (DLX) allows us to build complex, delayed retry flows without writing complex scheduling logic in our application.
+
+MySQL:
+A relational database is used to track the exact state of each event. It provides atomic transaction guarantees, allowing us to enforce unique constraints (primary keys) to prevent duplicate processing. It also stores a reliable historical audit trail of all sent notifications.
+
+Docker & Docker Compose:
+It packages the Node.js code, MySQL, and RabbitMQ with their exact versions, configuration settings, health checks, and database schemas. It ensures that the entire system boots up with a single command (docker-compose up) and runs identically on any environment.
+
+
+3. How Each Functionality is Implemented
+
+A. Publish & Ingress Schema Validation
+Implementation: The publisher endpoint (POST /api/v1/publish-notification-event) validates the request payload against a strict schema using regex checks (ensuring event_id is a valid UUID, type is email/sms/push, etc.).
+
+Mechanism: If validation passes, the service publishes the event to RabbitMQ using the exchange and returns 202 Accepted. If it fails, it returns 400 Bad Request before the broker is touched.
+
+B. Idempotency (Duplicate Prevention)
+Implementation: The consumer uses the MySQL processed_events table as an atomic distributed lock.
+
+Mechanism:The consumer tries to execute INSERT INTO processed_events (event_id, status) VALUES (?, 'PROCESSING').
+If the insertion succeeds, the consumer proceeds.
+If it fails with a primary key duplicate error, the consumer checks the status. If the status is COMPLETED or FAILED, it ignores the duplicate and acknowledges the message (ACK). If the status is PROCESSING, it means another worker is currently handling it, so it requeues the message (NACK with requeue=true).
+
+C. Exponential Backoff Retries
+Implementation: Instead of blocking the worker's thread using setTimeout (which would stop the worker from processing other notifications and lose messages if the server crashes), we use RabbitMQ delay queues.
+
+Mechanism:When a transient failure occurs (e.g. mock email API times out), the consumer sets the event's status in the database to PENDING.
+The consumer publishes the message to a retry queue configured with a dynamic expiration time (e.g. notification_events_retry_1 with a 1s TTL, retry_2 with 5s, retry_3 with 25s).
+The consumer acknowledges (ACK) the original message.
+Once the TTL expires in RabbitMQ, the message is automatically routed back to the main notification_events queue via RabbitMQ's Dead-Letter Exchange (DLX) to be consumed again.
+
+D. Dead-Letter Queue (DLQ)
+Implementation: A dedicated queue (notification_dead_letter_queue) is bound to the exchange.
+
+Mechanism:If a message fails permanently (validation error or mock permanent failure), or if it exhausts the maximum allowed retry attempts (MAX_RETRIES=3), it is moved directly to the DLQ.
+
+The database status is updated to FAILED, a database log with status DLQ_MOVED is written, and the message is published to the DLQ along with audit headers (original error message and total attempts). The message is then acknowledged (ACK) to clear it from the active processing flow.
+
+E. Graceful Shutdown
+Implementation: The system listens for operating system signals (SIGTERM, SIGINT).
+
+Mechanism:When triggered, it stops the Express API server from accepting new HTTP requests, closes the RabbitMQ consumer channel so it stops pulling new messages, allows any active in-flight message processing to finish, and closes the MySQL connection pool safely before exiting.
+7:51 PM
