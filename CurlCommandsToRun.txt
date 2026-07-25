@@ -1,0 +1,83 @@
+docker-compose up -d --build
+
+
+docker-compose ps
+
+
+curl -X POST -H "Content-Type: application/json" -d '{
+  "event_id": "aa11bb22-33cc-44dd-55ee-66ff77aa88bb",
+  "type": "email",
+  "recipient": "john.doe@example.com",
+  "payload": {
+    "subject": "Welcome!",
+    "body": "Hello John, welcome to our platform."
+  },
+  "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+}' http://localhost:8080/api/v1/publish-notification-event
+
+
+
+curl -X POST -H "Content-Type: application/json" -d '{
+  "event_id": "bb22cc33-44dd-55ee-66ff-77aa88bb99cc",
+  "type": "sms",
+  "recipient": "+15550199",
+  "payload": {
+    "body": "Your transient OTP code is 9876",
+    "simulate_transient_failure": true
+  },
+  "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+}' http://localhost:8080/api/v1/publish-notification-event
+
+
+
+
+curl -X POST -H "Content-Type: application/json" -d '{
+  "event_id": "aa11bb22-33cc-44dd-55ee-66ff77aa88bb",
+  "type": "email",
+  "recipient": "john.doe@example.com",
+  "payload": {
+    "subject": "Welcome!",
+    "body": "Hello John, welcome to our platform."
+  },
+  "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+}' http://localhost:8080/api/v1/publish-notification-event
+
+
+curl -X POST -H "Content-Type: application/json" -d '{
+  "event_id": "cc33dd44-55ee-66ff-77aa-88bb99cc00dd",
+  "type": "push",
+  "recipient": "invalid-device-token",
+  "payload": {
+    "title": "Alert",
+    "body": "Go straight to DLQ",
+    "simulate_permanent_failure": true
+  },
+  "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+}' http://localhost:8080/api/v1/publish-notification-event
+
+
+curl -i -X POST -H "Content-Type: application/json" -d '{
+  "event_id": "dd44ee55-66ff-77aa-88bb-99cc00ddeeff",
+  "type": "slack",
+  "recipient": "#general",
+  "payload": {
+    "body": "Test invalid validation"
+  },
+  "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+}' http://localhost:8080/api/v1/publish-notification-event
+
+
+
+
+
+docker exec -i notification_mysql mysql -uroot -prootpassword -e "
+SELECT * FROM notifications_db.processed_events;
+SELECT * FROM notifications_db.notification_logs;
+"
+
+
+
+docker logs notification_app --tail 50
+
+
+docker compose down
