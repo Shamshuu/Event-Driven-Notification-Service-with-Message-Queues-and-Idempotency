@@ -1,83 +1,78 @@
-docker-compose up -d --build
+docker compose up -d --build
 
+docker compose ps
 
-docker-compose ps
+# 1. Health Check
+curl -i http://localhost:8080/health
 
-
+# 2. Successful notification (Email)
 curl -X POST -H "Content-Type: application/json" -d '{
-  "event_id": "aa11bb22-33cc-44dd-55ee-66ff77aa88bb",
+  "event_id": "11111111-2222-4333-8444-555555555555",
   "type": "email",
-  "recipient": "john.doe@example.com",
+  "recipient": "user@example.com",
   "payload": {
-    "subject": "Welcome!",
-    "body": "Hello John, welcome to our platform."
+    "subject": "Greetings!",
+    "body": "This is a successful notification."
   },
   "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
 }' http://localhost:8080/api/v1/publish-notification-event
 
-
-
+# 3. Idempotency check (Duplicate event ID)
 curl -X POST -H "Content-Type: application/json" -d '{
-  "event_id": "bb22cc33-44dd-55ee-66ff-77aa88bb99cc",
+  "event_id": "11111111-2222-4333-8444-555555555555",
+  "type": "email",
+  "recipient": "user@example.com",
+  "payload": {
+    "subject": "Greetings!",
+    "body": "This is a successful notification."
+  },
+  "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+}' http://localhost:8080/api/v1/publish-notification-event
+
+# 4. Transient failure & retries leading to DLQ (SMS)
+curl -X POST -H "Content-Type: application/json" -d '{
+  "event_id": "22222222-3333-4444-9555-666666666666",
   "type": "sms",
   "recipient": "+15550199",
   "payload": {
-    "body": "Your transient OTP code is 9876",
+    "body": "This event will fail transiently.",
     "simulate_transient_failure": true
   },
   "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
 }' http://localhost:8080/api/v1/publish-notification-event
 
-
-
-
+# 5. Permanent failure & direct DLQ routing (Push)
 curl -X POST -H "Content-Type: application/json" -d '{
-  "event_id": "aa11bb22-33cc-44dd-55ee-66ff77aa88bb",
-  "type": "email",
-  "recipient": "john.doe@example.com",
-  "payload": {
-    "subject": "Welcome!",
-    "body": "Hello John, welcome to our platform."
-  },
-  "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
-}' http://localhost:8080/api/v1/publish-notification-event
-
-
-curl -X POST -H "Content-Type: application/json" -d '{
-  "event_id": "cc33dd44-55ee-66ff-77aa-88bb99cc00dd",
+  "event_id": "33333333-4444-4555-a666-777777777777",
   "type": "push",
   "recipient": "invalid-device-token",
   "payload": {
-    "title": "Alert",
-    "body": "Go straight to DLQ",
+    "title": "Immediate DLQ",
+    "body": "This event will fail permanently.",
     "simulate_permanent_failure": true
   },
   "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
 }' http://localhost:8080/api/v1/publish-notification-event
 
-
+# 6. Schema validation failure (invalid type/UUID)
 curl -i -X POST -H "Content-Type: application/json" -d '{
-  "event_id": "dd44ee55-66ff-77aa-88bb-99cc00ddeeff",
+  "event_id": "invalid-uuid-string",
   "type": "slack",
   "recipient": "#general",
   "payload": {
-    "body": "Test invalid validation"
+    "body": "This will fail schema validation."
   },
   "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
 }' http://localhost:8080/api/v1/publish-notification-event
 
-
-
-
-
+# 7. Check database tables
 docker exec -i notification_mysql mysql -uroot -prootpassword -e "
 SELECT * FROM notifications_db.processed_events;
 SELECT * FROM notifications_db.notification_logs;
 "
 
+# 8. View application logs
+docker logs notification_app --tail 100
 
-
-docker logs notification_app --tail 50
-
-
+# 9. Clean up
 docker compose down
